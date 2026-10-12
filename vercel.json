@@ -1,0 +1,78 @@
+{
+    "$schema": "https://openapi.vercel.sh/vercel.json",
+    "regions": [
+        "bom1"
+    ],
+    "crons": [
+        {
+            "path": "/api/keepalive.php",
+            "schedule": "0 22 * * *"
+        }
+    ],
+    "functions": {
+        "api/vercel.php": {
+            "runtime": "vercel-php@0.6.2",
+            "maxDuration": 30
+        }
+    },
+    "routes": [
+        {
+            "src": "/(assets/js/vts-sw\\.js|vts-sw\\.js|scanner/[^/]*-sw\\.js)",
+            "headers": {
+                "Cache-Control": "no-cache, must-revalidate",
+                "Service-Worker-Allowed": "/",
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "SAMEORIGIN",
+                "Referrer-Policy": "strict-origin-when-cross-origin",
+                "Content-Security-Policy": "base-uri 'self'; object-src 'none'; frame-ancestors 'self'"
+            },
+            "dest": "/$1"
+        },
+        {
+            "src": "/(assets/.+\\.(?:css|js|mjs|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot|html|json))",
+            "headers": {
+                "Cache-Control": "public, max-age=604800",
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "SAMEORIGIN",
+                "Referrer-Policy": "strict-origin-when-cross-origin",
+                "Content-Security-Policy": "base-uri 'self'; object-src 'none'; frame-ancestors 'self'"
+            },
+            "dest": "/$1"
+        },
+        {
+            "src": "/scanner/?",
+            "dest": "/scanner/spck_scanner.html",
+            "headers": {
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "SAMEORIGIN",
+                "Referrer-Policy": "strict-origin-when-cross-origin",
+                "Content-Security-Policy": "base-uri 'self'; object-src 'none'; frame-ancestors 'self'"
+            }
+        },
+        {
+            "src": "/(scanner/[^/]+\\.(?:html|js|png|webmanifest|css))",
+            "headers": {
+                "Cache-Control": "no-cache, must-revalidate",
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "SAMEORIGIN",
+                "Referrer-Policy": "strict-origin-when-cross-origin",
+                "Content-Security-Policy": "base-uri 'self'; object-src 'none'; frame-ancestors 'self'"
+            },
+            "dest": "/$1"
+        },
+        {
+            "src": "/(manifest\\.webmanifest)",
+            "dest": "/$1",
+            "headers": {
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "SAMEORIGIN",
+                "Referrer-Policy": "strict-origin-when-cross-origin",
+                "Content-Security-Policy": "base-uri 'self'; object-src 'none'; frame-ancestors 'self'"
+            }
+        },
+        {
+            "src": "/(.*)",
+            "dest": "/api/vercel.php"
+        }
+    ]
+}

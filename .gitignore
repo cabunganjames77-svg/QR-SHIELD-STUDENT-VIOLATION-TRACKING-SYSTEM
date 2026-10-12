@@ -1,0 +1,61 @@
+# ============================================================
+# QR SHIELD — what must never reach the repository
+#
+# This file holds real student records. Two categories below are not
+# "untidy to commit", they are disclosures: a live credential is public the
+# moment the repo is, and student names, School IDs, faces and QR payloads
+# are personal data belonging to people who did not agree to publish them.
+#
+# A secret that has ever been committed stays in the history, and in every
+# clone and fork made before it was removed. Removing the file later is not
+# a fix — the only fix is to ROTATE the credential.
+# ============================================================
+
+# ---- SECRETS ------------------------------------------------
+# config/mail.php carries the Gmail app password and the Brevo API key.
+# Commit config/mail.php.example instead and copy it locally.
+config/mail.php
+config/db_credentials.php
+config/google-service-account.json
+config/google-oauth.json
+.env
+
+# ---- STUDENT PERSONAL DATA ----------------------------------
+# Evidence photos and profile photos are pictures of real students.
+uploads/evidence/*
+!uploads/evidence/.gitkeep
+uploads/profile/*
+!uploads/profile/.gitkeep
+
+# Generated QR PNGs encode "SchoolID|QRS1:<token>" — a scannable student
+# credential. They are rebuilt on demand by vts_issue_student_qr(), so there
+# is nothing to preserve here.
+qr/generated/*
+!qr/generated/.gitkeep
+
+# Runtime data: automatic DB dumps, archived scan imports, schema stamps,
+# and PHP's own session files (a session file is a signed-in account).
+backups/
+
+# ---- LOCAL TOOLING ------------------------------------------
+# Agent/editor scaffolding — machine-specific, not part of the system.
+.agents/
+.claude/
+.codex/
+.impeccable/
+.vscode/
+
+# ---- EDITOR / OS NOISE --------------------------------------
+*.bak
+*.tmp
+*.orig
+.DS_Store
+Thumbs.db
+desktop.ini
+__preview_*.php
+_probe*.php
+_sess_probe.php
+_ed.php
+
+.vercel
+.env*

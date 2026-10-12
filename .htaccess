@@ -1,0 +1,309 @@
+# ============================================================
+#  VTS — root hardening
+# ============================================================
+Options -Indexes
+DirectoryIndex index.php
+
+# Never show PHP errors/paths to visitors (log them instead).
+# Guarded: where PHP does not run as an Apache module (FastCGI/FPM, as on
+# some hosts) a bare php_flag is a configuration error and every page 500s.
+<IfModule php_module>
+    php_flag display_errors Off
+    php_flag log_errors On
+    php_flag expose_php Off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag display_errors Off
+    php_flag log_errors On
+    php_flag expose_php Off
+</IfModule>
+# XAMPP runs PHP 8, whose module is mod_php.c, so the block above never
+# applied and errors (file paths, SQL) showed to anyone, ngrok visitors too.
+<IfModule mod_php.c>
+    php_flag display_errors Off
+    php_flag log_errors On
+</IfModule>
+
+# --- Security headers on every response ---
+<IfModule mod_headers.c>
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set Permissions-Policy "geolocation=(), microphone=(), payment=()"
+    # Mirrors the Content-Security-Policy set in auth/session.php, so the static
+    # files Apache serves without PHP -- spck_scanner.html above all -- are
+    # covered by the same rules. See the long note in that file for why
+    # script-src and style-src are deliberately not listed yet.
+    Header always set Content-Security-Policy "base-uri 'self'; form-action 'self'; object-src 'none'; frame-ancestors 'self'"
+    Header always unset X-Powered-By
+</IfModule>
+
+# ============================================================
+#  TRANSFER SIZE AND CACHING
+#
+#  WHY THIS EXISTS. Over a tunnel (ngrok) on a phone the app was taking many
+#  seconds per page for every role, and none of it was PHP: a dashboard renders
+#  server-side in well under a tenth of a second. It was the wire.
+#
+#  Two separate faults, and they compound:
+#
+#    1. NOTHING WAS COMPRESSED. The stylesheets alone are ~370 KB of plain
+#       text across 13 files, sent byte-for-byte. Text compresses by roughly
+#       80%, so four fifths of every page load was avoidable.
+#
+#    2. NOTHING WAS CACHEABLE. Only ETag/Last-Modified were set, and those do
+#       not stop a request - they only make the answer short. So every single
+#       navigation re-asked the server about all ~17 assets, and over a tunnel
+#       each of those round trips costs real time no matter how small the
+#       reply. That is the part that made moving BETWEEN pages feel slow.
+#
+#  The asset URLs already carry ?v=<filemtime> (see includes/header.php), so a
+#  changed file gets a new URL and a long cache life is safe: the browser can
+#  never be stuck with a stale stylesheet.
+# ============================================================
+
+<IfModule mod_deflate.c>
+    # Only text. Images, fonts (woff2) and PDFs are already compressed, and
+    # running them through gzip costs CPU to make them very slightly bigger.
+    <IfModule mod_filter.c>
+        AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css
+        AddOutputFilterByType DEFLATE application/javascript application/x-javascript text/javascript
+        AddOutputFilterByType DEFLATE application/json application/xml
+        AddOutputFilterByType DEFLATE image/svg+xml
+    </IfModule>
+    # Proxies must not hand a gzipped copy to a client that cannot read it.
+    <IfModule mod_headers.c>
+        Header append Vary Accept-Encoding
+    </IfModule>
+</IfModule>
+
+<IfModule mod_expires.c>
+    ExpiresActive On
+    # Fingerprinted by ?v=<filemtime>, so a year is safe and a change is
+    # picked up immediately under its new URL.
+    ExpiresByType text/css                  "access plus 1 year"
+    ExpiresByType application/javascript    "access plus 1 year"
+    ExpiresByType text/javascript           "access plus 1 year"
+    ExpiresByType font/woff2                "access plus 1 year"
+    ExpiresByType font/woff                 "access plus 1 year"
+    ExpiresByType image/jpeg                "access plus 30 days"
+    ExpiresByType image/png                 "access plus 30 days"
+    ExpiresByType image/svg+xml             "access plus 30 days"
+    ExpiresByType image/x-icon              "access plus 30 days"
+    # HTML is never cached: it carries the session and the live data.
+    ExpiresByType text/html                 "access plus 0 seconds"
+</IfModule>
+
+<IfModule mod_headers.c>
+    # immutable tells the browser not to even revalidate on a reload - the
+    # part that removes the round trip, not just the body.
+    <FilesMatch "\.(css|js|woff2?|ttf|eot|svg|jpg|jpeg|png|gif|ico)$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+    # A page carrying a logged-in session must never be stored by a proxy or
+    # replayed from the back-forward cache after sign-out.
+    <FilesMatch "\.php$">
+        Header set Cache-Control "no-store, no-cache, must-revalidate, max-age=0"
+    </FilesMatch>
+
+    # ------------------------------------------------------------------
+    #  THE TWO FILES THE RULE ABOVE GETS WRONG, AND WHY IT MATTERS MOST
+    #  FOR EXACTLY THESE TWO.
+    #
+    #  The immutable rule is justified a few lines up by "the asset URLs
+    #  already carry ?v=<filemtime>". That is true of everything
+    #  includes/header.php emits, and it is NOT true of these:
+    #
+    #    *-sw.js              the service workers (scanner-sw.js,
+    #                         sw_student.js). Nothing references them with a
+    #                         ?v= — navigator.serviceWorker.register() names
+    #                         them as a plain path. A service worker is the
+    #                         thing that decides what version of an app a
+    #                         phone runs, so caching one for a year is the
+    #                         one file where a stale copy freezes EVERYTHING
+    #                         ELSE too. (Current browsers bypass the HTTP
+    #                         cache for the worker script by default, which
+    #                         is why this has not bitten yet; relying on a
+    #                         default that used to be the other way round is
+    #                         not a plan.)
+    #
+    #    spck_scanner.html    the scanner app itself, opened by URL with no
+    #                         version string on it.
+    #
+    #  no-cache is not no-store: the browser may still keep a copy, it just
+    #  has to ask first. A 304 is a few hundred bytes, and offline still
+    #  works — offline is the SERVICE WORKER's cache, which is a separate
+    #  store that these headers do not govern at all.
+    # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    #  THE SITE-WIDE SERVICE WORKER LIVES IN assets/js/, NOT AT THE ROOT.
+    #
+    #  A service worker may only control pages at or below its own folder,
+    #  so assets/js/vts-sw.js could normally only look after assets/js/ --
+    #  useless. This header is the server granting it the whole app, which
+    #  is what lets the root stay clean instead of carrying a sw.js for
+    #  scope reasons alone. Registration passes a matching scope; without
+    #  this header that registration fails and no page is cached at all.
+    # ------------------------------------------------------------------
+    <Files "vts-sw.js">
+        Header set Service-Worker-Allowed "/"
+    </Files>
+
+    <FilesMatch "(-sw\.js|^sw_.*\.js|^spck_scanner\.html)$">
+        Header set Cache-Control "no-cache, must-revalidate"
+    </FilesMatch>
+</IfModule>
+
+RewriteEngine On
+
+# --- Block DOT-DIRECTORIES (.git, .svn, .claude, .vscode ...) -------------
+# WHY THIS IS SEPARATE FROM THE FilesMatch RULE BELOW.
+#
+# That rule contains `^\.` and looks like it already covers this. It does
+# not: <FilesMatch> is matched against the FINAL PATH SEGMENT only. For
+# /SAD/.git/config the segment Apache tests is "config" -- an ordinary name
+# that matches nothing in the pattern -- so the request was ALLOWED. `.env`
+# is blocked because .env really is the last segment; `.git/config` is not.
+#
+# The gap was live, not theoretical: with the ngrok tunnel up, GET
+# /SAD/.git/config answered 200 to the public internet. From /.git alone a
+# standard dumper reconstructs the entire repository -- every source file,
+# every past revision, and any credential that was ever committed and later
+# removed, because removing a file does not remove its blob from the pack.
+#
+# Matched on the URL PATH, so every segment is tested, not just the last.
+# .well-known is exempt: Let's Encrypt/ACME needs it to issue a certificate.
+RewriteRule (^|/)\.(?!well-known(/|$))[^/]* - [F,L]
+
+
+# --- Force HTTPS (passwords must never travel in the clear) ---
+# Skipped on localhost / LAN / local-dev-tool domains (XAMPP's localhost,
+# Laragon's *.test, etc. have no trusted certificate there by default, so
+# forcing https would break the site during development).
+# Every PRIVATE/LAN address range is exempt, not just 192.168.x. A phone
+# hotspot does not always hand out 192.168.x: Android often uses 10.x and an
+# iPhone hotspot uses 172.20.10.x. Those hosts fell through to the redirect
+# below, so the phone was bounced to https://<ip>/ , met XAMPP's self-signed
+# certificate, and the connection was refused -- which looked exactly like a
+# wrong IP or a firewall, and no amount of retyping the address could fix it.
+#   10.0.0.0/8  172.16.0.0/12  192.168.0.0/16  169.254.0.0/16 (link-local)
+RewriteCond %{HTTP_HOST} !^(localhost|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2[0-9]|3[01])\.) [NC]
+RewriteCond %{HTTP_HOST} !\.(test|localhost|local)(:[0-9]+)?$ [NC]
+RewriteCond %{HTTPS} off
+RewriteCond %{HTTP:X-Forwarded-Proto} !https
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# --- Block source-leak / backup / dev files anywhere (.bak, .sql, .env, .old...) ---
+# setup_passwords.php resets every seeded account to a known password and
+# needs no login; it is a setup-time tool that kept living in the web root.
+# vts_scanner_list_*.json / Students*.csv are EXPORTED STUDENT LISTS -- real
+# names and student numbers -- that anyone with the URL could read.
+#
+# _probe*.php / __preview_*.php / _ed.php / _sess_probe.php are the throwaway
+# dev scripts .gitignore already knows about, so they never reach the repo --
+# but "not committed" is not "not reachable". _probe_login.php sat in this
+# folder handing a full Admin session to anyone who loaded
+# /_probe_login.php?role=Admin, no password asked, and this machine has been
+# reached through an ngrok tunnel before (see config/env.php). A probe belongs
+# on the command line: mint the session with PHP CLI instead, the way
+# tools/_retired/_probe_login.php had to be used after being pulled out.
+<FilesMatch "(?i)\.(sql|log|ini|conf|bak|old|orig|save|swp|dist|env)$|^\.|composer\.(json|lock)|check_setup\.php|setup_passwords\.php|^_probe.*\.php$|^__preview_.*\.php$|^_(ed|sess_probe)\.php$|^vts_scanner_list.*\.json$|^students.*\.(csv|json|vtsl)$">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+# (the installable-app manifests must stay readable)
+#   scanner.webmanifest   the gate scanner, installed on a marshal's phone
+#   manifest.webmanifest  the site itself, installable by every role -- see
+#                         the note in includes/header.php
+<FilesMatch "^(scanner|manifest)\.webmanifest$">
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+</FilesMatch>
+
+# A manifest served as text/plain is ignored, and the browser then offers no
+# install at all -- with nothing in the console to say why, because nothing
+# failed. Apache ships no mapping for this extension, so it is stated here.
+<IfModule mod_mime.c>
+    AddType application/manifest+json .webmanifest
+</IfModule>
+
+# --- The scanner moved into scanner/ (2026-09-16) ---
+# It used to be spck_scanner.html in this folder, with its three libraries
+# beside it and a SECOND copy of the whole thing in phone_scanner/ for
+# phones. The two drifted apart, and tools/sync-scanner.bat -- the script
+# written to stop that -- copied the file wholesale, so every run put the
+# web root's Back link into the phone copy and re-broke it. There is one
+# folder now: this server serves it, and the same folder is what goes on a
+# phone. Marshals have the old address bookmarked and it is written on the
+# setup notes, so it redirects instead of 404ing.
+#
+# The %1 is not decoration: a relative target in a .htaccess redirect is
+# resolved against the FILESYSTEM, so `scanner/spck_scanner.html` sent the
+# browser to http://localhost/C:/xampp/htdocs/SAD/scanner/... Capturing the
+# directory out of REQUEST_URI gives an absolute URL path without writing
+# /SAD/ in here, which would be wrong on any host that serves this app
+# from the web root.
+RewriteCond %{REQUEST_URI} ^(.*)/spck_scanner\.html$
+RewriteRule ^spck_scanner\.html$ %1/scanner/spck_scanner.html [R=301,L]
+RewriteCond %{REQUEST_URI} ^(.*)/scanner_app\.php$
+RewriteRule ^scanner_app\.php$ %1/scanner/spck_scanner.html [R=301,L]
+
+# --- The account pages moved into account/, the manual into help/ (2026-09-16) ---
+# These were loose in the web root. They are also the URLs people have
+# bookmarked and, for verify.php, the link inside every registration email
+# already sent -- so the old addresses keep working. Same %1 trick as above:
+# a relative target would be resolved against the filesystem.
+RewriteCond %{REQUEST_URI} ^(.*)/(student_search|register|verify|login_otp|forgot_password|logout|account)\.php$
+RewriteRule ^(student_search|register|verify|login_otp|forgot_password|logout|account)\.php$ %1/account/$1.php [R=301,L,QSA]
+RewriteCond %{REQUEST_URI} ^(.*)/manual\.php$
+RewriteRule ^manual\.php$ %1/help/manual.php [R=301,L,QSA]
+
+# --- Block bot probes for panels that don't exist here ---
+RewriteCond %{REQUEST_URI} (?i)(wp-admin|wp-login|xmlrpc\.php|\.env|phpinfo) [NC]
+RewriteRule .* - [F,L]
+
+# --- Block POSTs with no User-Agent (crude bots) ---
+RewriteCond %{REQUEST_METHOD} POST
+RewriteCond %{HTTP_USER_AGENT} ^$
+RewriteRule .* - [F,L]
+
+# --- STUDENT QR IMAGES: SIGNED-IN ONLY (2026-10-03) -------------------
+# qr/generated/<School ID>.png holds the student's scan token and is named
+# by School ID, so it was a guessable public file. Every request for it now
+# goes through qr/serve.php, which checks the session (a student gets only
+# their own). api/vercel.php does the same on Vercel.
+RewriteRule ^qr/generated/([A-Za-z0-9_-]+\.png)$ qr/serve.php?f=$1 [L,QSD]
+
+# --- A MISSING FILE MUST LOOK MISSING ---------------------------------
+#
+# The fallback below sends anything that is not a real file to index.php,
+# with a 200. For a mistyped PAGE that is friendly. For a stylesheet it is
+# a trap: the browser asks for assets/css/landing.css, gets the landing
+# PAGE back under a 200, sees text/html where it wanted text/css, and
+# silently discards it. Nothing errors. The page simply renders with no
+# styling at all and the console says nothing, because as far as HTTP is
+# concerned every request succeeded.
+#
+# That is exactly what happens when index.php is opened at a URL one level
+# deeper than it lives -- /SAD/index.php/ (note the trailing slash), or any
+# rewritten path with an extra segment. Its asset paths are relative, so
+# they resolve against the wrong directory, and every one of them comes
+# back as HTML with a 200.
+#
+# So: a request that names a static file and does not find one gets a real
+# 404. The same rewrite already caused a redirect loop once (see the Guard
+# note in index.php); this is the other half of that lesson.
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_URI} \.(css|js|mjs|map|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot|json|webmanifest|vtsl)$ [NC]
+RewriteRule .* - [L,R=404]
+
+# --- Your original fallback: unknown paths -> index.php (kept) ---
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ index.php [L]

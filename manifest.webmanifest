@@ -1,0 +1,25 @@
+{
+  "name": "QR Shield — Student Violation Tracking System",
+  "short_name": "QR Shield",
+  "description": "Record and review student violations at Golden West Colleges — works with no connection and sends what you recorded when the system is reachable again.",
+  "start_url": "index.php",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#123a63",
+  "theme_color": "#123a63",
+  "orientation": "any",
+  "icons": [
+    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "assets/icons/icon-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Offline access",
+      "short_name": "Offline",
+      "description": "Download this site onto this device and see what is waiting to be sent",
+      "url": "account/offline.php",
+      "icons": [{ "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" }]
+    }
+  ]
+}
